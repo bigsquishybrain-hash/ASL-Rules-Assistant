@@ -116,6 +116,14 @@ tr:last-child td{border-bottom:0}
 .dh{display:flex;gap:10px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line)}
 .dh b{flex:1}
 .db{overflow:auto;padding:12px 14px 18px;max-width:900px;width:100%;margin:0 auto}
+.pillbtn{font:inherit;font-size:.82rem;padding:4px 11px;border-radius:99px;border:1px solid var(--line);background:var(--well);color:var(--muted);cursor:pointer}
+.pillbtn[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+details.chcard{background:var(--surface);border:1px solid var(--line);border-radius:10px;margin-bottom:8px;padding:0 14px}
+details.chcard>summary{cursor:pointer;padding:11px 0;list-style:none;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+details.chcard>summary::-webkit-details-marker{display:none}
+details.chcard>summary::before{content:"\25B8";color:var(--muted)}
+details.chcard[open]>summary::before{content:"\25BE"}
+details.chcard .chbody{padding:0 0 12px}
 footer{max-width:1100px;margin:0 auto;padding:6px 14px 30px;color:var(--muted);font-size:.78rem}
 @media (max-width:560px){.rail button b{font-size:.8rem}.rail button span{display:none}}
 </style>
@@ -312,12 +320,19 @@ footer{max-width:1100px;margin:0 auto;padding:6px 14px 30px;color:var(--muted);f
 
 <!-- ============ CHARTS ============ -->
 <section class="panel" id="p-charts" hidden>
-  <div class="card"><h2>Infantry Fire Table (IFT)</h2><div id="chIFT"></div><div class="rt small" id="chIFTnote" style="margin-top:8px"></div></div>
-  <div class="card"><h2>IFT FP modifiers</h2><div class="rt" id="chFP"></div></div>
-  <div class="card"><h2>IFT DRM</h2><div class="rt" id="chDRM"></div></div>
-  <div class="card"><h2>Close Combat Table</h2><div id="chCCT"></div><div class="rt" id="chCCmod" style="margin-top:8px"></div></div>
-  <div class="card"><h2>Sequence of Play chart</h2><div class="rt" id="chSOP"></div></div>
-  <div class="card"><h2>Turn Record Chart (A3.9)</h2><div class="rt" id="chTRC"></div></div>
+  <div class="card"><h2>Chapter charts</h2>
+    <div class="muted small">Charts and tables from the chart pages of Chapters A&ndash;G and W, grouped by chapter. Tap a chart to open it. Rule numbers inside open the rule text.</div>
+    <div class="row" id="chPills" style="margin:10px 0"></div>
+    <div class="row">
+      <input type="search" id="chQ" placeholder="Filter charts: to hit, kill, weather, bog, searchlight&hellip;" style="flex:1 1 260px">
+      <label class="chk"><input type="checkbox" id="chRule"> Also show tables found inside rule text</label>
+    </div>
+    <div class="row" id="chQuick" style="margin-top:8px"></div>
+    <div class="muted small" id="chInfo" style="margin-top:6px"></div>
+  </div>
+  <details class="chcard" open id="chLive"><summary><span class="pill att">LIVE</span> <b>Infantry Fire Table</b> <span class="muted small">your last IFT roll is highlighted</span></summary><div id="chIFT" style="padding:8px 0"></div></details>
+  <details class="chcard" id="chLive2"><summary><span class="pill att">LIVE</span> <b>Close Combat Table</b></summary><div id="chCCT" style="padding:8px 0"></div></details>
+  <div id="chList"></div>
 </section>
 </main>
 
@@ -918,18 +933,79 @@ var qt; $("#qBox").addEventListener("input", function(){ clearTimeout(qt); qt = 
 chapSel.addEventListener("change", runSearch);
 
 /* ============================================================
-   CHARTS
+   CHARTS: chapter chart library (A-G and W)
    ============================================================ */
-var chartsDone = false;
+var CH_NAMES = { A:"Chapter A", B:"Chapter B", C:"Chapter C", D:"Chapter D", E:"Chapter E", F:"Chapter F", G:"Chapter G", W:"Chapter W" };
+var CH_KEYS = ["A","B","C","D","E","F","G","W"];
+var CHART_RE = /chart|table|divider|quick reference|summar/i, FOOT_RE = /footnote/i;
+var CH = [], chSel = "", chBuilt = false;
+(function buildChartIndex(){
+  var fidx = -1;
+  D.sections.forEach(function(s, i){ if(fidx < 0 && s.src === "EF" && /^(F[\d.]|CHAPTER F)/.test(s.h)) fidx = i; });
+  D.sections.forEach(function(s, i){
+    var ch = null;
+    if(s.src === "A1" || s.src === "A2") ch = "A";
+    else if(s.src === "B" || s.src === "C" || s.src === "D" || s.src === "G") ch = s.src;
+    else if(s.src === "EF") ch = (fidx > -1 && i >= fidx) ? "F" : "E";
+    else if(s.src === "JKW") ch = /^W/.test(s.h) ? "W" : null;
+    if(!ch || FOOT_RE.test(s.h)) return;
+    if(/^SPILLOVER: CHAPTER G/.test(s.h)) ch = "G";
+    var rows = (s.body.match(/^\s*\|/gm) || []).length, tier = CHART_RE.test(s.h) ? "chart" : (rows >= 4 ? "rule" : null);
+    if(tier) CH.push({ i:i, ch:ch, tier:tier, h:s.h, low:(s.h + " " + s.body).toLowerCase(), hl:s.h.toLowerCase() });
+  });
+})();
+var chHasChart = {};
+CH.forEach(function(it){ if(it.tier === "chart") chHasChart[it.ch] = true; });
+function chShown(it, inc){ return it.tier === "chart" || inc || !chHasChart[it.ch]; }
+function tablesOnly(body){
+  var lines = body.split("\n"), out = [], i = 0;
+  while(i < lines.length){
+    if(/^\s*\|/.test(lines[i])){
+      var j = i - 1; while(j >= 0 && lines[j].trim() === "") j--;
+      if(j >= 0 && !/^\s*\|/.test(lines[j]) && out.indexOf(lines[j]) < 0) out.push("**" + lines[j].replace(/\*\*/g, "").replace(/^[-*#\s]+/, "") + "**");
+      while(i < lines.length && /^\s*\|/.test(lines[i])){ out.push(lines[i]); i++; }
+      out.push("");
+    } else i++;
+  }
+  return out.join("\n");
+}
+function chFilter(){
+  var q = $("#chQ").value.trim().toLowerCase(), toks = q ? q.split(/\s+/) : [], inc = $("#chRule").checked;
+  var list = CH.filter(function(it){
+    if(chSel && it.ch !== chSel) return false;
+    if(!chShown(it, inc)) return false;
+    return toks.every(function(t){ return it.low.indexOf(t) > -1; });
+  });
+  if(toks.length) list.sort(function(a, b){
+    var ah = toks.every(function(t){ return a.hl.indexOf(t) > -1; }) ? 0 : 1, bh = toks.every(function(t){ return b.hl.indexOf(t) > -1; }) ? 0 : 1;
+    return ah - bh || a.i - b.i;
+  });
+  return list;
+}
+function renderChartList(){
+  var inc = $("#chRule").checked, list = chFilter();
+  $("#chPills").innerHTML = '<button class="pillbtn" data-c="" aria-pressed="'+(chSel === "")+'">All</button>' + CH_KEYS.map(function(k){
+    var n = CH.filter(function(it){ return it.ch === k && chShown(it, inc); }).length;
+    return '<button class="pillbtn" data-c="'+k+'" aria-pressed="'+(chSel === k)+'">'+k+" ("+n+")</button>";
+  }).join("");
+  $("#chInfo").textContent = list.length + " chart" + (list.length === 1 ? "" : "s") + (chSel ? " in " + CH_NAMES[chSel] : " in Chapters A\u2013G and W");
+  $("#chList").innerHTML = list.map(function(it){
+    return '<details class="chcard" data-i="'+it.i+'"><summary><span class="pill">'+it.ch+"</span> <b>"+esc(it.h.length > 96 ? it.h.slice(0, 94) + "\u2026" : it.h)+"</b>"+(it.tier === "rule" ? ' <span class="muted small">table from rule text</span>' : "")+'</summary><div class="rt chbody"></div></details>';
+  }).join("") || '<div class="card muted">No charts match.</div>';
+}
+$("#chList").addEventListener("toggle", function(e){
+  var d = e.target; if(!d.open || !d.matches("details.chcard")) return;
+  var b = d.querySelector(".chbody"); if(b && !b.innerHTML) { var it = CH.filter(function(x){ return x.i === +d.dataset.i; })[0], body = D.sections[+d.dataset.i].body; b.innerHTML = md(it && it.tier === "rule" ? tablesOnly(body) : body); }
+}, true);
+$("#chPills").addEventListener("click", function(e){ var b = e.target.closest("[data-c]"); if(b){ chSel = b.dataset.c; renderChartList(); } });
+var cqt; $("#chQ").addEventListener("input", function(){ clearTimeout(cqt); cqt = setTimeout(renderChartList, 120); });
+$("#chRule").addEventListener("change", renderChartList);
+$("#chQuick").innerHTML = [["IFT","ift"],["To Hit","to hit"],["To Kill","to kill"],["Weather","weather"],["Concealment","concealment"],["Sniper","sniper"],["Bog","bog"],["Victory Points","victory"],["Support Weapons","support weapons"],["Heat of Battle","heat of battle"]].map(function(q){ return '<button class="btn sm" data-q="'+q[1]+'">'+q[0]+"</button>"; }).join("");
+$("#chQuick").addEventListener("click", function(e){ var b = e.target.closest("[data-q]"); if(b){ $("#chQ").value = b.dataset.q; chSel = ""; renderChartList(); } });
 function renderCharts(){
   renderIftTable($("#chIFT"), lastIft);
-  if(chartsDone) return; chartsDone = true;
-  var s = sectionByHeading("A7 INFANTRY FIRE TABLE"); $("#chIFTnote").innerHTML = s ? md(s.body.split("\n").filter(function(l){ return !/^\s*\|/.test(l); }).join("\n")) : "";
-  var map = [["chFP","IFT FP MODIFIERS"],["chDRM","IFT DRM"],["chSOP","A3 SEQUENCE OF PLAY"],["chTRC","A3.9 TURN RECORD"]];
-  map.forEach(function(m){ var sec = sectionByHeading(m[1]); $("#"+m[0]).innerHTML = sec ? md(sec.body) : '<span class="muted">Not in the loaded data.</span>'; });
   renderCCT($("#chCCT"), -1, false);
-  var cs = sectionByHeading("A11.11 CLOSE COMBAT TABLE");
-  $("#chCCmod").innerHTML = cs ? md(cs.body.split("\n").filter(function(l){ return !/^\|\s*(Odds|Kill #|Hand-to-Hand)/.test(l) && !/^\|\s*-+\s*\|/.test(l) || /^\|\s*Mod/.test(l) || /^\|\s*[-+\u2212\u00d7x]/.test(l) || /^\|---\|---\|$/.test(l); }).join("\n")) : "";
+  if(!chBuilt){ chBuilt = true; renderChartList(); }
 }
 
 /* ---------------- boot ---------------- */
