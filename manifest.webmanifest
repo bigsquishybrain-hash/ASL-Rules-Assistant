@@ -1,0 +1,16 @@
+{
+  "name": "ASL Rules Assistant",
+  "short_name": "ASL Rules",
+  "description": "ASL sequence of play, IFT, morale and close combat engine with rulebook lookup",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f4f1ea",
+  "theme_color": "#7a2e1a",
+  "icons": [
+    {"src": "icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "icon-512.png", "sizes": "512x512", "type": "image/png"},
+    {"src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ]
+}
